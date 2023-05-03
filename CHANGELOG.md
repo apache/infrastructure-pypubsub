@@ -1,6 +1,11 @@
+# 0.7.3
+- Added support for reloading the ACL configuration with SIGUSR2 (#2).
+- Added support for resuming a stream with a sequence cursor.
+
 # 0.7.2
-- Addessed an issue with SQS not updating in real-time, only when backlog is requested.
+- Addressed an issue with SQS not updating in real-time, only when backlog is requested.
 - Added secure topics feature for locking publishing of certain pubsub topics to the ACL. 
+- Minor stability improvements.
 
 # 0.7.1
 - Use asyncio queues for modifying the list of events pending publishing to avoid potential race conditions.

@@ -32,9 +32,11 @@ import collections
 import plugins.ldap
 import plugins.sqs
 import typing
+import signal
+import uuid
 
 # Some consts
-PUBSUB_VERSION = '0.7.2'
+PUBSUB_VERSION = '0.7.3'
 PUBSUB_CONTENT_TYPE = 'application/vnd.pypubsub-stream'
 PUBSUB_DEFAULT_PORT = 2069
 PUBSUB_DEFAULT_IP = '0.0.0.0'
@@ -130,11 +132,17 @@ class Server:
         self.pending_events = asyncio.Queue()
         self.backlog = []
         self.last_ping = time.time()
+        self.acl_file = args.acl
         self.acl = {}
+        self.load_acl()
+
+    def load_acl(self):
+        """Loads ACL from file"""
         try:
-            self.acl = yaml.safe_load(open(args.acl))
+            self.acl = yaml.safe_load(open(self.acl_file))
+            print(f"Loaded ACL from {self.acl_file}")
         except FileNotFoundError:
-            print(f"ACL configuration file {args.acl} not found, private events will not be broadcast.")
+            print(f"ACL configuration file {self.acl_file} not found, private events will not be broadcast.")
 
     async def poll(self):
         """Polls for new stuff to publish, and if found, publishes to whomever wants it."""
@@ -230,8 +238,9 @@ class Server:
                 await resp.prepare(request)
 
                 # Is the client requesting a backlog of items?
-                backlog = request.headers.get('X-Fetch-Since')
-                if backlog:
+                epoch_based_backlog = request.headers.get('X-Fetch-Since')
+                cursor_based_backlog = request.headers.get('X-Fetch-Since-Cursor')
+                if epoch_based_backlog:  # epoch-based backlog search
                     try:
                         backlog_ts = int(backlog)
                     except ValueError:  # Default to 0 if we can't parse the epoch
@@ -242,6 +251,15 @@ class Server:
                     # For each item, publish to client if new enough.
                     for item in self.backlog:
                         if item.timestamp >= backlog_ts:
+                            await item.publish([subscriber])
+                
+                if cursor_based_backlog and len(cursor_based_backlog) == 36:  # UUID4 cursor-based backlog search
+                    # For each item, publish to client if it was published after this cursor
+                    is_after_cursor = False
+                    for item in self.backlog:
+                        if item.cursor == cursor_based_backlog:  # Found cursor, mark it!
+                            is_after_cursor = True
+                        elif is_after_cursor:  # This is after the cursor, stream it
                             await item.publish([subscriber])
 
                 while True:
@@ -325,6 +343,11 @@ class Server:
 
     def run(self):
         loop = asyncio.get_event_loop()
+        # add a signal handler for SIGUSR2 to reload the ACL from disk
+        try:
+            loop.add_signal_handler(signal.SIGUSR2, self.load_acl)
+        except ValueError:
+            pass
         try:
             loop.run_until_complete(self.server_loop(loop))
         except KeyboardInterrupt:
@@ -415,15 +438,18 @@ class Payload:
         self.timestamp = timestamp or time.time()
         self.topics = [x for x in path.split('/') if x]
         self.private = False
+        self.cursor = str(uuid.uuid4())  # Event cursor for playback - UUID4 style
 
         # Private payload?
         if self.topics and self.topics[0] == 'private':
             self.private = True
             del self.topics[0]  # Remove the private bit from topics now.
 
+        # Set standard pubsub meta data in the payload
         self.json['pubsub_timestamp'] = self.timestamp
         self.json['pubsub_topics'] = self.topics
         self.json['pubsub_path'] = path
+        self.json['pubsub_cursor'] = self.cursor
 
     async def publish(self, subscribers: typing.List[Subscriber]):
         """Publishes an object to all subscribers using those topics (or a sub-set thereof)"""
