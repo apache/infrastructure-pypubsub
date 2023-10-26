@@ -288,7 +288,7 @@ class Server:
                         break
                     await asyncio.sleep(5)
             # We may get exception types we don't have imported, so grab ANY exception and kick out the subscriber
-            except:
+            except Exception: # don't catch fatal exceptions
                 pass
             if subscriber in self.subscribers:
                 self.subscribers.remove(subscriber)
