@@ -1,0 +1,13 @@
+[Unit]
+Description=ASF Infra PyPuSub Service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pypubsub/
+ExecStart=/usr/local/bin/pipenv run python3 pypubsub.py
+Restart=always
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
